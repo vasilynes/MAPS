@@ -2,9 +2,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import jit, grad
 import tensorflow_probability.substrates.jax.distributions as tfd
+import tensorflow_probability.substrates.jax.bijectors as tfb
 from typing import NamedTuple
 from jaxtyping import Array, Float
 from dynamax.parameters import ParameterProperties
+from dynamax.types import Scalar
+from dynamax.hidden_markov_model.models.abstractions import HMMEmissions, HMM
+from sklearn.cluster import KMeans
 
 class StudentTDistribution(tfd.Distribution):
     """
@@ -73,5 +77,78 @@ class ParamsTHMMEmissions(NamedTuple):
     """
     locs:   Float[Array, "num_states emission_dim"] | ParameterProperties
     scales: Float[Array, "num_states emission_dim"] | ParameterProperties
-    dfs:    Float[Array, " num_states"] | ParameterProperties
+    dfs:    Float[Array, "num_states"] | ParameterProperties
 
+class THMMEmissions(HMMEmissions):
+    """
+    Implements t-distributed emissions for HMM.
+
+    Args:
+        num_states: number of hidden states K.
+        emission_dim: dimension of the observation vector D.
+        df_init: initial df.
+    """
+
+    def __init__(self, num_states: int, emission_dim: int, df_init: float = 10.0):
+        super().__init__()
+        self.num_states = num_states
+        self.emission_dim = emission_dim
+        self.df_init = df_init
+    
+    @property
+    def emission_shape(self) -> tuple[int]:
+        return (self.emission_dim,)
+    
+    def distribution(
+            self, 
+            params: ParamsTHMMEmissions,
+            state: int, 
+            inputs=None
+    ) -> tfd.Distribution:
+        return StudentTDistribution(
+            loc=params.locs[state],
+            scale=params.scales[state],
+            df=params.dfs[state]
+        )
+    
+    def log_prior(self, *args, **kwargs) -> Scalar:
+        return 0.0
+    
+    def initialize(
+            self,
+            key: Array = jr.PRNGKey(0),
+            method='prior',
+            emission_locs: Float[Array, 'num_states emission dim'] | None = None,
+            emission_scales: Float[Array, 'num_states emission_dims'] | None = None,
+            emission_dfs: Float[Array, 'num_states'] | None = None,
+            emissions: Float[Array, 'num_timesteps emission_dim'] | None = None
+    ) -> tuple[ParamsTHMMEmissions, ParamsTHMMEmissions]:
+        
+        default = lambda x, x0: x if x is not None else x0
+
+        if method.lower() == 'kmeans' and emissions is not None:
+            key, subkey = jr.split(key)
+            sklearn_key = int(jr.randint(subkey, (), 0, 2**31 - 1))
+
+            km = KMeans(self.num_states, random_state=sklearn_key).fit(
+                emissions.reshape(-1, self.emission_dim)
+            )
+            _locs = jnp.array(km.cluster_centers_)
+        else:
+            key, k1 = jr.split(key, 2)
+            _locs = jr.normal(k1, (self.num_states, self.emission_dim))
+
+        _scales = jnp.ones((self.num_states, self.emission_dim))
+        _dfs = jnp.full((self.num_states,), self.df_init)
+
+        params = ParamsTHMMEmissions(
+            locs=default(emission_locs, _locs),
+            scales=default(emission_scales, _scales),
+            dfs=default(emission_dfs, _dfs)
+        )
+        props = ParamsTHMMEmissions(
+            locs=ParameterProperties(),
+            scales=ParameterProperties(constrainer=tfb.Softplus()),
+            dfs=ParameterProperties(constrainer=tfb.Softplus())
+        )
+        return params, props

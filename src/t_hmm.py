@@ -2,6 +2,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import jit, grad
 import tensorflow_probability.substrates.jax.distributions as tfd
+from typing import NamedTuple
+from jaxtyping import Array, Float
+from dynamax.parameters import ParameterProperties
 
 class StudentTDistribution(tfd.Distribution):
     """
@@ -61,5 +64,14 @@ class StudentTDistribution(tfd.Distribution):
     def _batch_shape_tensor(self):
         return jnp.zeros([], dtype=jnp.int32).shape
     
+class ParamsTHMMEmissions(NamedTuple):
+    """
+    Per-state emission parameters.
+ 
+    Shapes are (num_states, emission_dim) for locs and scales,
+    and (num_states,) for df (one df per state, shared across dims).
+    """
+    locs:   Float[Array, "num_states emission_dim"] | ParameterProperties
+    scales: Float[Array, "num_states emission_dim"] | ParameterProperties
+    dfs:    Float[Array, " num_states"] | ParameterProperties
 
-    

@@ -3,18 +3,28 @@ import jax.random as jr
 from jax import jit, grad
 import tensorflow_probability.substrates.jax.distributions as tfd
 import tensorflow_probability.substrates.jax.bijectors as tfb
+
 from typing import NamedTuple
 from jaxtyping import Array, Float
+
+from sklearn.cluster import KMeans
+
 from dynamax.parameters import ParameterProperties
 from dynamax.types import Scalar
 from dynamax.hidden_markov_model.models.abstractions import HMMEmissions, HMM
-from sklearn.cluster import KMeans
+from dynamax.hidden_markov_model.models.initial import (
+    StandardHMMInitialState, ParamsStandardHMMInitialState
+)
+from dynamax.hidden_markov_model.models.transitions import (
+    StandardHMMTransitions, ParamsStandardHMMTransitions
+)
 
 class StudentTDistribution(tfd.Distribution):
     """
     Multivariate location-scale Student distribution p(x | loc, scale, df).
     The emission dims are assumed to be independent, univariate, t-distributed.
     """
+
     def __init__(
             self,
             loc, 
@@ -152,3 +162,68 @@ class THMMEmissions(HMMEmissions):
             dfs=ParameterProperties(constrainer=tfb.Softplus())
         )
         return params, props
+
+class ParamsTHMM(NamedTuple):
+    initial:     ParamsStandardHMMInitialState
+    transitions: ParamsStandardHMMTransitions
+    emissions:   ParamsTHMMEmissions
+ 
+
+class THMM(HMM):
+    """
+    Hidden Markov Model with t-distributed emissions.
+    """
+    
+    def __init__(
+        self,
+        num_states: int, 
+        emission_dim: int,
+        df_init: float = 10.0,
+        initial_probs_concentration: float | Float[Array, 'num_states'] = 1.1,
+        transition_matrix_concentration: float | Float[Array, 'num_states'] = 1.1
+    ):
+        self.emission_dim = emission_dim
+        initial_component = StandardHMMInitialState(
+            num_states, initial_probs_concentration=initial_probs_concentration
+        )
+        transition_component = StandardHMMTransitions(
+            num_states, concentration=transition_matrix_concentration
+        )
+        emission_component = THMMEmissions(
+            num_states, emission_dim, df_init
+        )
+
+        super().__init__(
+            num_states, 
+            initial_component, 
+            transition_component, 
+            emission_component
+        )
+
+    def initialize(
+        self,
+        key: Array = jr.PRNGKey(0),
+        method: str = 'prior',
+        initial_probs:     Float[Array, " num_states"] | None              = None,
+        transition_matrix: Float[Array, "num_states num_states"] | None    = None,
+        emission_locs:     Float[Array, "num_states emission_dim"] | None  = None,
+        emission_scales:   Float[Array, "num_states emission_dim"] | None  = None,
+        emission_dfs:      Float[Array, "num_states"] | None               = None,
+        emissions:         Float[Array, "num_timesteps emission_dim"] | None = None,
+    ) -> tuple[ParamsTHMM, ParamsTHMM]:
+        k1, k2, k3 = jr.split(key, 3)
+        params, props = {}, {}
+        params['initial'], props['initial'] = self.initial_component.initialize(
+            k1, method=method, initial_probs=initial_probs
+        )
+        params['transitions'], props['transitions'] = self.transition_component.initialize(
+            k2, method=method, transition_matrix=transition_matrix
+        )
+        params['emissions'], props['emissions'] = self.emission_component.initialize(
+            k3, method=method,
+            emission_locs=emission_locs, 
+            emission_scales=emission_scales,
+            emission_dfs=emission_dfs,
+            emissions=emissions
+        )
+        return ParamsTHMM(**params), ParamsTHMM(**props)

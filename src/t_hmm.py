@@ -7,8 +7,6 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 from typing import NamedTuple
 from jaxtyping import Array, Float
 
-from sklearn.cluster import KMeans
-
 from dynamax.parameters import ParameterProperties
 from dynamax.types import Scalar
 from dynamax.hidden_markov_model.models.abstractions import HMMEmissions, HMM
@@ -67,7 +65,7 @@ class StudentTDistribution(tfd.Distribution):
         return self._loc + self._scale * z / jnp.sqrt(v / self._df)
     
     def _event_shape(self):
-        return self._loc_shape
+        return self._loc.shape
     
     def _event_shape_tensor(self):
         return jnp.array(self._loc.shape, dtype=jnp.int32)
@@ -85,9 +83,9 @@ class ParamsTHMMEmissions(NamedTuple):
     Shapes are (num_states, emission_dim) for locs and scales,
     and (num_states,) for df (one df per state, shared across dims).
     """
-    locs:   Float[Array, "num_states emission_dim"] | ParameterProperties
-    scales: Float[Array, "num_states emission_dim"] | ParameterProperties
-    dfs:    Float[Array, "num_states"] | ParameterProperties
+    betas: Float[Array, 'num_states input_dim emission_dim'] | ParameterProperties
+    scales: Float[Array, 'num_states emission_dim'] | ParameterProperties
+    dfs: Float[Array, 'num_states'] | ParameterProperties
 
 class THMMEmissions(HMMEmissions):
     """
@@ -99,10 +97,17 @@ class THMMEmissions(HMMEmissions):
         df_init: initial df.
     """
 
-    def __init__(self, num_states: int, emission_dim: int, df_init: float = 10.0):
+    def __init__(
+            self, 
+            num_states: int, 
+            emission_dim: int, 
+            input_dim: int,
+            df_init: float = 10.0
+        ):
         super().__init__()
         self.num_states = num_states
         self.emission_dim = emission_dim
+        self.input_dim = input_dim
         self.df_init = df_init
     
     @property
@@ -115,8 +120,9 @@ class THMMEmissions(HMMEmissions):
             state: int, 
             inputs=None
     ) -> tfd.Distribution:
+        loc = inputs @ params.betas[state]
         return StudentTDistribution(
-            loc=params.locs[state],
+            loc=loc,
             scale=params.scales[state],
             df=params.dfs[state]
         )
@@ -128,7 +134,7 @@ class THMMEmissions(HMMEmissions):
             self,
             key: Array = jr.PRNGKey(0),
             method='prior',
-            emission_locs: Float[Array, 'num_states emission dim'] | None = None,
+            emission_betas: Float[Array, 'num_states input_dim emission_dim'] | None = None,
             emission_scales: Float[Array, 'num_states emission_dims'] | None = None,
             emission_dfs: Float[Array, 'num_states'] | None = None,
             emissions: Float[Array, 'num_timesteps emission_dim'] | None = None
@@ -136,39 +142,28 @@ class THMMEmissions(HMMEmissions):
         
         default = lambda x, x0: x if x is not None else x0
 
-        if method.lower() == 'kmeans' and emissions is not None:
-            key, subkey = jr.split(key)
-            sklearn_key = int(jr.randint(subkey, (), 0, 2**31 - 1))
-
-            km = KMeans(self.num_states, random_state=sklearn_key).fit(
-                emissions.reshape(-1, self.emission_dim)
-            )
-            _locs = jnp.array(km.cluster_centers_)
-        else:
-            key, k1 = jr.split(key, 2)
-            _locs = jr.normal(k1, (self.num_states, self.emission_dim))
-
+        key, k1 = jr.split(key, 2)
+        _betas = jr.normal(k1, (self.num_states, self.input_dim, self.emission_dim))
         _scales = jnp.ones((self.num_states, self.emission_dim))
         _dfs = jnp.full((self.num_states,), self.df_init)
 
         params = ParamsTHMMEmissions(
-            locs=default(emission_locs, _locs),
+            betas=default(emission_betas, _betas),
             scales=default(emission_scales, _scales),
             dfs=default(emission_dfs, _dfs)
         )
         props = ParamsTHMMEmissions(
-            locs=ParameterProperties(),
+            betas=ParameterProperties(),
             scales=ParameterProperties(constrainer=tfb.Softplus()),
             dfs=ParameterProperties(constrainer=tfb.Softplus())
         )
         return params, props
 
 class ParamsTHMM(NamedTuple):
-    initial:     ParamsStandardHMMInitialState
+    initial: ParamsStandardHMMInitialState
     transitions: ParamsStandardHMMTransitions
-    emissions:   ParamsTHMMEmissions
+    emissions: ParamsTHMMEmissions
  
-
 class THMM(HMM):
     """
     Hidden Markov Model with t-distributed emissions.
@@ -178,6 +173,7 @@ class THMM(HMM):
         self,
         num_states: int, 
         emission_dim: int,
+        input_dim: int,
         df_init: float = 10.0,
         initial_probs_concentration: float | Float[Array, 'num_states'] = 1.1,
         transition_matrix_concentration: float | Float[Array, 'num_states'] = 1.1
@@ -190,8 +186,9 @@ class THMM(HMM):
             num_states, concentration=transition_matrix_concentration
         )
         emission_component = THMMEmissions(
-            num_states, emission_dim, df_init
+            num_states, emission_dim, input_dim, df_init
         )
+        self.input_dim = input_dim
 
         super().__init__(
             num_states, 
@@ -204,12 +201,12 @@ class THMM(HMM):
         self,
         key: Array = jr.PRNGKey(0),
         method: str = 'prior',
-        initial_probs:     Float[Array, " num_states"] | None              = None,
-        transition_matrix: Float[Array, "num_states num_states"] | None    = None,
-        emission_locs:     Float[Array, "num_states emission_dim"] | None  = None,
-        emission_scales:   Float[Array, "num_states emission_dim"] | None  = None,
-        emission_dfs:      Float[Array, "num_states"] | None               = None,
-        emissions:         Float[Array, "num_timesteps emission_dim"] | None = None,
+        initial_probs: Float[Array, 'num_states'] | None  = None,
+        transition_matrix: Float[Array, 'num_states num_states'] | None = None,
+        emission_betas: Float[Array, 'num_states input_dim emission_dim'] | None = None,
+        emission_scales: Float[Array, 'num_states emission_dim'] | None = None,
+        emission_dfs: Float[Array, 'num_states'] | None = None,
+        emissions: Float[Array, 'num_timesteps emission_dim'] | None = None,
     ) -> tuple[ParamsTHMM, ParamsTHMM]:
         k1, k2, k3 = jr.split(key, 3)
         params, props = {}, {}
@@ -220,8 +217,9 @@ class THMM(HMM):
             k2, method=method, transition_matrix=transition_matrix
         )
         params['emissions'], props['emissions'] = self.emission_component.initialize(
-            k3, method=method,
-            emission_locs=emission_locs, 
+            k3, 
+            method=method,
+            emission_betas=emission_betas, 
             emission_scales=emission_scales,
             emission_dfs=emission_dfs,
             emissions=emissions

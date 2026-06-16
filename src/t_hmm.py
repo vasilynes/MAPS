@@ -102,7 +102,7 @@ class THMMEmissions(HMMEmissions):
             num_states: int, 
             emission_dim: int, 
             input_dim: int,
-            df_init: float = 10.0
+            df_init: float = 4.0  # prior mode of Gamma(3.0, 0.5)
         ):
         super().__init__()
         self.num_states = num_states
@@ -177,7 +177,7 @@ class THMM(HMM):
         num_states: int, 
         emission_dim: int,
         input_dim: int,
-        df_init: float = 10.0,
+        df_init: float = 4.0,  # prior mode of Gamma(3.0, 0.5)
         initial_probs_concentration: float | Float[Array, 'num_states'] = 1.1,
         transition_matrix_concentration: float | Float[Array, 'num_states'] = 1.1
     ):

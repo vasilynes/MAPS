@@ -120,6 +120,8 @@ class THMMEmissions(HMMEmissions):
             state: int, 
             inputs=None
     ) -> tfd.Distribution:
+        if inputs is None:
+            raise ValueError('THMM requires input regressors at every time step!')
         loc = inputs @ params.betas[state]
         return StudentTDistribution(
             loc=loc,

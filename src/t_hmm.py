@@ -129,8 +129,9 @@ class THMMEmissions(HMMEmissions):
             df=params.dfs[state]
         )
     
-    def log_prior(self, *args, **kwargs) -> Scalar:
-        return 0.0
+    def log_prior(self, params: ParamsTHMMEmissions) -> Scalar:
+        lp_df = tfd.Gamma(concentration=3.0, rate=0.5).log_prob(params.dfs).sum()
+        return lp_df
     
     def initialize(
             self,

@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import jax.random as jr
 from jax import jit, grad
+import jax.scipy.special as jsp
 import tensorflow_probability.substrates.jax.distributions as tfd
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
@@ -45,8 +46,8 @@ class StudentTDistribution(tfd.Distribution):
     def _log_prob(self, x):
         z = (x - self._loc) / self._scale
         lp = (
-            jnp.lgamma((self._df + 1) / 2)
-            - jnp.lgamma(self._df / 2)
+            jsp.gammaln((self._df + 1) / 2)
+            - jsp.gammaln(self._df / 2)
             - 0.5 * jnp.log(self._df * jnp.pi)
             - jnp.log(self._scale)
             - (self._df + 1) / 2 * jnp.log1p(z ** 2 / self._df)
@@ -147,7 +148,12 @@ class THMMEmissions(HMMEmissions):
 
         key, k1 = jr.split(key, 2)
         _betas = jr.normal(k1, (self.num_states, self.input_dim, self.emission_dim))
-        _scales = jnp.ones((self.num_states, self.emission_dim))
+        if emissions is not None:
+            empirical_std = jnp.std(emissions, axis=0) 
+            _scales = jnp.tile(empirical_std, (self.num_states, 1))
+        else:
+            _scales = jnp.ones((self.num_states, self.emission_dim))
+
         _dfs = jnp.full((self.num_states,), self.df_init)
 
         params = ParamsTHMMEmissions(
@@ -228,3 +234,7 @@ class THMM(HMM):
             emissions=emissions
         )
         return ParamsTHMM(**params), ParamsTHMM(**props)
+    
+    @property
+    def inputs_shape(self) -> tuple[int]:
+        return (self.input_dim,)

@@ -1,0 +1,6 @@
+dynamax==1.0.1
+jax==0.10.1
+jaxlib==0.10.1
+jaxtyping==0.3.11
+optax==0.2.8
+tensorflow-probability==0.25.0

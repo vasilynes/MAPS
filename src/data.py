@@ -1,7 +1,6 @@
 import yfinance as yf
 import polars as pl
 import matplotlib.pyplot as plt
-import polars as pl
 import jax.numpy as jnp
 
 def download_analyse():
@@ -72,7 +71,10 @@ def build_emissions_inputs():
     # inputs: [intercept, vix_lag1], shape (T, 2)
     intercept = jnp.ones(df.height)
     vix_lag1  = jnp.array(df['vix_lag1'].to_numpy())
-    inputs = jnp.stack([intercept, vix_lag1], axis=1)
+    vix_mean = vix_lag1.mean()
+    vix_std = vix_lag1.std()
+    vix_lag1_std = (vix_lag1 - vix_mean) / vix_std
+    inputs = jnp.stack([intercept, vix_lag1_std], axis=1)
 
     print('emissions shape:', emissions.shape)
     print('inputs shape:', inputs.shape)
@@ -85,5 +87,7 @@ def build_emissions_inputs():
 
     jnp.save('data/emissions.npy', emissions)
     jnp.save('data/inputs.npy', inputs)
+    jnp.save('data/vix_mean.npy', jnp.array(vix_mean))
+    jnp.save('data/vix_std.npy', jnp.array(vix_std))
 
 build_emissions_inputs()

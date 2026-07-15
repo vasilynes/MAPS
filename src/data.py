@@ -7,13 +7,21 @@ def download_analyse():
     spy = yf.download('SPY', period='5y', interval='1d')['Close']
     vix = yf.download('^VIX', period='5y', interval='1d')['Close']
 
-    df = pl.DataFrame({
+    spy_df = pl.DataFrame({
         'date': spy.index.to_numpy().astype('datetime64[us]'),
-        'spy': spy.to_numpy().ravel(),
-        'vix': vix.to_numpy().ravel(),
-    }).with_columns(
+        'spy':  spy.to_numpy().ravel(),
+    })
+
+    vix_df = pl.DataFrame({
+        'date': vix.index.to_numpy().astype('datetime64[us]'),
+        'vix':  vix.to_numpy().ravel(),
+    })  
+
+    df = spy_df.join(vix_df, on='date', how='inner')
+
+    df = df.with_columns(
         (pl.col('spy').log() - pl.col('spy').log().shift(1)).alias('spy_logret')
-    ).drop_nulls() 
+    ).drop_nulls()
 
     df.write_parquet('data/spy_vix_data.parquet')
     print(df.head())
@@ -90,4 +98,4 @@ def build_emissions_inputs():
     jnp.save('data/vix_mean.npy', jnp.array(vix_mean))
     jnp.save('data/vix_std.npy', jnp.array(vix_std))
 
-build_emissions_inputs()
+download_analyse()

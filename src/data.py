@@ -2,6 +2,7 @@ import yfinance as yf
 import polars as pl
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
+import os
 
 def download_analyse():
     spy = yf.download('SPY', period='5y', interval='1d')['Close']
@@ -22,6 +23,8 @@ def download_analyse():
     df = df.with_columns(
         (pl.col('spy').log() - pl.col('spy').log().shift(1)).alias('spy_logret')
     ).drop_nulls()
+
+    os.makedirs('data', exist_ok=True)
 
     df.write_parquet('data/spy_vix_data.parquet')
     print(df.head())
